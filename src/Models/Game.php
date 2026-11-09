@@ -27,6 +27,7 @@ use ServerCreator\Steam\Store;
  * @property int $backups
  * @property int $allocations
  * @property int $ports
+ * @property string $port_mode
  * @property list<string>|null $port_variables
  * @property string|null $port_range
  * @property int $sort
@@ -49,6 +50,16 @@ final class Game extends Model
     public function egg(): BelongsTo
     {
         return $this->belongsTo(Egg::class);
+    }
+
+    public function portCount(): int
+    {
+        return max(1, $this->ports, count($this->port_variables ?? []) + 1);
+    }
+
+    public function consecutivePorts(): bool
+    {
+        return $this->port_mode !== 'automatic';
     }
 
     /** A custom image wins over Steam artwork. */

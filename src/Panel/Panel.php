@@ -56,10 +56,12 @@ final readonly class Panel
      * Validates the variables a user may edit and fills every other one with its default.
      *
      * @param  array<string, string>  $values
+     * @param  array<string, string>  $managed  Trusted allocation-derived values, never raw user input.
      * @return array<string, string>
      */
-    public function environment(Egg $egg, array $values): array
+    public function environment(Egg $egg, array $values, array $managed = []): array
     {
+        $values = array_replace($values, $managed);
         $validated = app(VariableValidatorService::class)
             ->validate($egg, $values, User::USER_LEVEL_USER)
             ->filter(static fn ($variable): bool => $variable->value !== null)
@@ -68,7 +70,13 @@ final readonly class Panel
         return $egg->variables()->get()
             ->mapWithKeys(static fn ($variable): array => [$variable->env_variable => (string) ($variable->default_value ?? '')])
             ->merge($validated)
+            ->merge($managed)
             ->all();
+    }
+
+    public function validateEnvironment(Egg $egg, array $values): void
+    {
+        app(VariableValidatorService::class)->validate($egg, $values, User::USER_LEVEL_ADMIN);
     }
 
     /**
@@ -104,14 +112,14 @@ final readonly class Panel
      * @param  list<array{int, int}>  $ranges
      * @return list<Allocation>
      */
-    public function allocationsInARow(Egg $egg, int $memory, int $disk, array $locations, int $count, array $ranges = []): array
+    public function allocationsInARow(Egg $egg, int $memory, int $disk, array $locations, int $count, array $ranges = [], bool $consecutive = true): array
     {
         $nodes = Node::query()->viableFor($memory, $disk)->inLocations($locations)->forEggTags($egg->tagSlugs())->forDeployTags([])->get()->pluck('id')->all();
         throw_if($nodes === [], NoViableNodeException::class, trans('exceptions.deployment.no_viable_nodes'));
 
         $free = Allocation::query()->unassigned()->onNodes($nodes)->onPorts([], $ranges)->toBase()->get(['id', 'node_id', 'ip', 'port'])
             ->map(static fn (object $row): array => ['id' => (int) $row->id, 'node' => (int) $row->node_id, 'ip' => (string) $row->ip, 'port' => (int) $row->port]);
-        $runs = Ports::runs($free, $count);
+        $runs = Ports::runs($free, $count, $consecutive);
         throw_if($runs === [], NoViableAllocationException::class, trans('exceptions.deployment.no_viable_allocations'));
 
         $ids = $runs[array_rand($runs)];
@@ -182,11 +190,11 @@ final readonly class Panel
      * @param  list<array{int, int}>  $ranges
      * @return list<Allocation>
      */
-    public function freeRunOnNode(Server $server, int $count, array $ranges): array
+    public function freeRunOnNode(Server $server, int $count, array $ranges, bool $consecutive = true): array
     {
         $free = Allocation::query()->unassigned()->onNodes([$server->node_id])->onPorts([], $ranges)->toBase()->get(['id', 'node_id', 'ip', 'port'])
             ->map(static fn (object $row): array => ['id' => (int) $row->id, 'node' => (int) $row->node_id, 'ip' => (string) $row->ip, 'port' => (int) $row->port]);
-        $runs = Ports::runs($free, max(1, $count));
+        $runs = Ports::runs($free, max(1, $count), $consecutive);
         throw_if($runs === [], NoViableAllocationException::class, trans('exceptions.deployment.no_viable_allocations'));
 
         $ids = $runs[array_rand($runs)];
@@ -277,6 +285,6 @@ final readonly class Panel
     /** @return Collection<int, Egg> */
     public function eggs(): Collection
     {
-        return Egg::query()->orderBy('name')->get(['id', 'name', 'docker_images']);
+        return Egg::query()->with('variables')->orderBy('name')->get(['id', 'name', 'docker_images']);
     }
 }

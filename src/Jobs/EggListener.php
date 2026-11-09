@@ -34,7 +34,7 @@ final readonly class EggListener implements ChangesServerEgg
             ? $owned->game
             : Game::query()->where('egg_id', $egg->id)->where('enabled', true)->orderBy('sort')->orderBy('name')->first() ?? $owned->game;
 
-        if ($game === null) {
+        if ($game === null || $game->egg_id !== $egg->id) {
             return $server;
         }
 

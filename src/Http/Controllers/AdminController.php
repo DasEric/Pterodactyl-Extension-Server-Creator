@@ -9,6 +9,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Pterodactyl\Models\Egg;
 use Pterodactyl\Models\Location;
 use Pterodactyl\Models\Server;
 use Pterodactyl\Models\User;
@@ -36,7 +38,7 @@ final class AdminController
 
         return new JsonResponse([
             'games' => $games->map(static fn (Game $game): array => Presenter::game($game)),
-            'eggs' => $eggs->map(static fn ($egg): array => ['id' => $egg->id, 'name' => $egg->name, 'images' => array_values($egg->docker_images)]),
+            'eggs' => $eggs->map(static fn ($egg): array => ['id' => $egg->id, 'name' => $egg->name, 'images' => array_values($egg->docker_images), 'variables' => $egg->variables->map(static fn ($variable): array => ['key' => $variable->env_variable, 'name' => $variable->name])->all()]),
             'popular' => array_map(
                 static fn (array $game): array => $game + ['artwork' => $game['steam_app_id'] ? Store::artwork($game['steam_app_id']) : null],
                 PopularGames::available($eggs->map(static fn ($egg): array => ['id' => $egg->id, 'name' => $egg->name]), $games->pluck('egg_id')->map(intval(...))->all()),
@@ -60,6 +62,7 @@ final class AdminController
         $data = $this->validatedGame($request, importable: true);
         $catalog = Arr::pull($data, 'catalog_id');
         $data['egg_id'] ??= $this->panel->importCatalogEgg($catalog)->id;
+        $data = $this->validatePorts($data);
 
         Game::query()->create($data);
 
@@ -68,7 +71,10 @@ final class AdminController
 
     public function updateGame(Request $request, int $id): JsonResponse
     {
-        Game::query()->findOrFail($id)->update($this->validatedGame($request));
+        $game = Game::query()->findOrFail($id);
+        $data = $this->validatedGame($request);
+        $data['port_mode'] ??= $game->port_mode ?? 'consecutive';
+        $game->update($this->validatePorts($data));
 
         return $this->index();
     }
@@ -200,6 +206,7 @@ final class AdminController
             'backups' => ['required', 'integer', 'min:0', 'max:100'],
             'allocations' => ['required', 'integer', 'min:0', 'max:100'],
             'ports' => ['integer', 'min:1', 'max:10'],
+            'port_mode' => ['sometimes', Rule::in(['automatic', 'consecutive'])],
             'port_variables' => ['nullable', 'array', 'max:9'],
             'port_variables.*' => ['string', 'distinct', 'regex:/^[A-Za-z0-9_]{1,191}$/'],
             'port_range' => ['nullable', 'string', 'max:191', static function (string $attribute, mixed $value, Closure $fail): void {
@@ -225,5 +232,22 @@ final class AdminController
         return array_map(intval(...), $request->validate(
             collect(Quota::RESOURCES)->mapWithKeys(static fn (string $resource): array => [$resource => ['required', 'integer', 'min:0', 'max:100000000']])->all(),
         ));
+    }
+
+    private function validatePorts(array $data): array
+    {
+        $data['port_mode'] ??= 'consecutive';
+        $variables = $data['port_variables'] ?? [];
+        $keys = Egg::query()->findOrFail($data['egg_id'])->variables()->pluck('env_variable')->all();
+        if (array_diff($variables, $keys) !== []) {
+            throw ValidationException::withMessages(['port_variables' => 'Select port variables that belong to the selected egg.']);
+        }
+        if ($data['port_mode'] === 'automatic') {
+            sort($variables, SORT_STRING);
+        }
+        $data['port_variables'] = $variables;
+        $data['ports'] = max($data['ports'], count($variables) + 1);
+
+        return $data;
     }
 }

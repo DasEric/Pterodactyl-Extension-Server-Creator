@@ -32,46 +32,48 @@ final readonly class ServerManager
         $this->assertWithin($game, $input);
 
         return Cache::lock("ext:server-creator:user:{$user->id}", 60)->block(15, function () use ($user, $game, $input): Server {
-            $resources = ['memory' => $input['memory'], 'disk' => $input['disk'], 'cpu' => $input['cpu'], 'databases' => $game->databases, 'backups' => $game->backups, 'allocations' => $game->allocations];
-            $this->assertQuota($this->quotas->for($user)->exceeded($resources, $this->quotas->used($user)));
+            return Cache::lock('ext:server-creator:ports', 120)->block(15, function () use ($user, $game, $input): Server {
+                $resources = ['memory' => $input['memory'], 'disk' => $input['disk'], 'cpu' => $input['cpu'], 'databases' => $game->databases, 'backups' => $game->backups, 'allocations' => $game->allocations];
+                $this->assertQuota($this->quotas->for($user)->exceeded($resources, $this->quotas->used($user)));
 
-            $egg = $game->egg;
-            $environment = $this->panel->environment($egg, $input['environment']);
+                $egg = $game->egg;
 
-            try {
-                $ranges = Ports::ranges((string) $game->port_range) ?? [];
-                $allocations = $game->ports > 1 || $ranges !== [] ? $this->panel->allocationsInARow($egg, $input['memory'], $input['disk'], $this->panel->locations(), $game->ports, $ranges) : [];
+                try {
+                    $ranges = Ports::ranges((string) $game->port_range) ?? [];
+                    $allocations = $game->portCount() > 1 || $ranges !== [] ? $this->panel->allocationsInARow($egg, $input['memory'], $input['disk'], $this->panel->locations(), $game->portCount(), $ranges, $game->consecutivePorts()) : [];
 
-                $environment = Ports::fill($environment, array_map(static fn (Allocation $allocation): int => $allocation->port, $allocations), $game->port_variables ?? []);
+                    $managed = Ports::managed($egg->variables()->pluck('env_variable')->all(), array_map(static fn (Allocation $allocation): int => $allocation->port, $allocations), $game->port_variables ?? [], $game->consecutivePorts());
+                    $environment = $this->panel->environment($egg, $input['environment'], $managed);
 
-                $server = $this->panel->create([
-                    'name' => $input['name'],
-                    'description' => '',
-                    'owner_id' => $user->id,
-                    'egg_id' => $egg->id,
-                    'image' => $game->docker_image ?: (string) (array_values($egg->docker_images)[0] ?? ''),
-                    'startup' => $egg->startup,
-                    'environment' => $environment,
-                    'memory' => $input['memory'],
-                    'swap' => 0,
-                    'disk' => $input['disk'],
-                    'io' => 500,
-                    'cpu' => $input['cpu'],
-                    'threads' => null,
-                    'oom_disabled' => true,
-                    'skip_scripts' => false,
-                    'start_on_completion' => true,
-                    'database_limit' => $game->databases,
-                    'allocation_limit' => $game->allocations,
-                    'backup_limit' => $game->backups,
-                ], $this->panel->locations(), $allocations);
-            } catch (NoViableNodeException|NoViableAllocationException) {
-                throw new CreatorException('No node has room for this server right now. Try smaller resources or ask an administrator.');
-            }
+                    $server = $this->panel->create([
+                        'name' => $input['name'],
+                        'description' => '',
+                        'owner_id' => $user->id,
+                        'egg_id' => $egg->id,
+                        'image' => $game->docker_image ?: (string) (array_values($egg->docker_images)[0] ?? ''),
+                        'startup' => $egg->startup,
+                        'environment' => $environment,
+                        'memory' => $input['memory'],
+                        'swap' => 0,
+                        'disk' => $input['disk'],
+                        'io' => 500,
+                        'cpu' => $input['cpu'],
+                        'threads' => null,
+                        'oom_disabled' => true,
+                        'skip_scripts' => false,
+                        'start_on_completion' => true,
+                        'database_limit' => $game->databases,
+                        'allocation_limit' => $game->allocations,
+                        'backup_limit' => $game->backups,
+                    ], $this->panel->locations(), $allocations);
+                } catch (NoViableNodeException|NoViableAllocationException) {
+                    throw new CreatorException('No node has room for this server right now. Try smaller resources or ask an administrator.');
+                }
 
-            OwnedServer::query()->create(['server_id' => $server->id, 'user_id' => $user->id, 'game_id' => $game->id]);
+                OwnedServer::query()->create(['server_id' => $server->id, 'user_id' => $user->id, 'game_id' => $game->id]);
 
-            return $server;
+                return $server;
+            });
         });
     }
 
@@ -114,9 +116,9 @@ final readonly class ServerManager
 
             $ranges = Ports::ranges((string) $game->port_range) ?? [];
 
-            if (Ports::runFrom($this->panel->allocationsOf($server), $server->allocation_id, $game->ports, $ranges) === null) {
+            if (Ports::runFrom($this->panel->allocationsOf($server), $server->allocation_id, $game->portCount(), $ranges, $game->consecutivePorts()) === null) {
                 try {
-                    $this->panel->freeRunOnNode($server, $game->ports, $ranges);
+                    $this->panel->freeRunOnNode($server, $game->portCount(), $ranges, $game->consecutivePorts());
                 } catch (NoViableAllocationException) {
                     throw new CreatorException('The node this server runs on has no free ports for this game. Ask an administrator.');
                 }
@@ -155,19 +157,7 @@ final readonly class ServerManager
      */
     public function fitPorts(Server $server, Game $game): Server
     {
-        $ranges = Ports::ranges((string) $game->port_range) ?? [];
-        $ports = Ports::runFrom($this->panel->allocationsOf($server), $server->allocation_id, $game->ports, $ranges);
-
-        if ($ports === null) {
-            $run = $this->panel->freeRunOnNode($server, $game->ports, $ranges);
-            $server = $this->panel->replaceAllocations($server, $run);
-            $ports = array_map(static fn (Allocation $allocation): int => $allocation->port, $run);
-        }
-
-        $environment = $this->panel->variableValues($server);
-        $this->panel->setVariables($server, array_diff_assoc(Ports::fill($environment, $ports, $game->port_variables ?? []), $environment));
-
-        return $server;
+        return Cache::lock('ext:server-creator:ports', 120)->block(15, fn (): Server => $this->fitPortsLocked($server, $game));
     }
 
     public function delete(User $user, Server $server): void
@@ -181,6 +171,28 @@ final readonly class ServerManager
         return OwnedServer::query()->with('game')->where('user_id', $user->id)->where('server_id', $server->id)->firstOr(
             static fn () => throw new CreatorException('Only servers you created yourself can be changed here.', 403),
         );
+    }
+
+    private function fitPortsLocked(Server $server, Game $game): Server
+    {
+        $ranges = Ports::ranges((string) $game->port_range) ?? [];
+        $ports = Ports::runFrom($this->panel->allocationsOf($server), $server->allocation_id, $game->portCount(), $ranges, $game->consecutivePorts());
+
+        $run = null;
+        if ($ports === null) {
+            $run = $this->panel->freeRunOnNode($server, $game->portCount(), $ranges, $game->consecutivePorts());
+            $ports = array_map(static fn (Allocation $allocation): int => $allocation->port, $run);
+        }
+
+        $environment = $this->panel->variableValues($server);
+        $managed = Ports::managed(array_keys($environment), $ports, $game->port_variables ?? [], $game->consecutivePorts());
+        $this->panel->validateEnvironment($server->egg, array_replace($environment, $managed));
+        if ($run !== null) {
+            $server = $this->panel->replaceAllocations($server, $run);
+        }
+        $this->panel->setVariables($server, array_diff_assoc($managed, $environment));
+
+        return $server;
     }
 
     /**

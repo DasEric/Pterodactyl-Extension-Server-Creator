@@ -9,6 +9,50 @@ use ServerCreator\Support\Ports;
 
 final class PortsTest extends TestCase
 {
+    public function test_automatic_ports_can_have_gaps_but_share_node_and_ip(): void
+    {
+        $free = [
+            ['id' => 1, 'node' => 1, 'ip' => '10.0.0.1', 'port' => 27015],
+            ['id' => 2, 'node' => 1, 'ip' => '10.0.0.1', 'port' => 27020],
+            ['id' => 3, 'node' => 2, 'ip' => '10.0.0.1', 'port' => 27021],
+        ];
+        $this->assertSame([[1, 2]], Ports::runs($free, 2, false));
+        $this->assertSame([], Ports::runs($free, 2));
+    }
+
+    public function test_automatic_variable_order_does_not_change_the_mapping(): void
+    {
+        $keys = ['TELNET_PORT', 'QUERY_PORT'];
+        $expected = ['QUERY_PORT' => '27020', 'TELNET_PORT' => '27025'];
+        $this->assertSame($expected, Ports::managed($keys, [27015, 27020, 27025], $keys, false));
+        $this->assertSame($expected, Ports::managed($keys, [27015, 27020, 27025], array_reverse($keys), false));
+        $this->assertSame(['TELNET_PORT' => '27020', 'QUERY_PORT' => '27025'], Ports::managed($keys, [27015, 27020, 27025], $keys));
+    }
+
+    public function test_unknown_managed_variable_is_rejected(): void
+    {
+        $this->expectException(\ServerCreator\Exceptions\CreatorException::class);
+        Ports::managed(['TELNET_PORT'], [27015, 27020], ['TYPO']);
+    }
+
+    public function test_missing_allocation_is_rejected(): void
+    {
+        $this->expectException(\ServerCreator\Exceptions\CreatorException::class);
+        Ports::managed(['TELNET_PORT'], [27015], ['TELNET_PORT']);
+    }
+
+    public function test_automatic_existing_ports_keep_primary_and_respect_ranges(): void
+    {
+        $held = [
+            ['id' => 1, 'ip' => '10.0.0.1', 'port' => 27025],
+            ['id' => 2, 'ip' => '10.0.0.1', 'port' => 27015],
+            ['id' => 3, 'ip' => '10.0.0.2', 'port' => 27016],
+        ];
+        $this->assertSame([27025, 27015], Ports::runFrom($held, 1, 2, [], false));
+        $this->assertNull(Ports::runFrom($held, 1, 3, [], false));
+        $this->assertNull(Ports::runFrom($held, 1, 2, [[27015, 27020]], false));
+    }
+
     public function test_runs_need_consecutive_ports_on_one_node_and_ip(): void
     {
         $free = [

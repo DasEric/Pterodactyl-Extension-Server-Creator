@@ -49,13 +49,14 @@ function blank(eggs: Admin['eggs']): GameInput {
         backups: 1,
         allocations: 0,
         ports: 1,
+        port_mode: 'automatic',
         port_variables: [],
         port_range: null,
     };
 }
 
 function fromPreset(preset: PopularGame, eggs: Admin['eggs']): GameInput {
-    return { ...blank(eggs), ...preset, catalog_id: preset.egg_id === null ? preset.catalog_id : null };
+    return { ...blank(eggs), ...preset, port_mode: 'consecutive', catalog_id: preset.egg_id === null ? preset.catalog_id : null };
 }
 
 export default function GameDialog({ game, preset = null, eggs, pending, onClose, onSave }: Props) {
@@ -65,6 +66,9 @@ export default function GameDialog({ game, preset = null, eggs, pending, onClose
     const steam = useQuery({ queryKey: keys.steam(term), queryFn: () => searchSteam(term), enabled: term.trim().length >= 2 });
     const set = (changes: Partial<GameInput>) => setInput((current) => ({ ...current, ...changes }));
     const egg = eggs.find((item) => item.id === input.egg_id);
+    const consecutive = (input.port_mode ?? 'consecutive') === 'consecutive';
+    const portCount = Math.max(input.ports, input.port_variables.length + 1);
+    const invalidPorts = new Set(input.port_variables).size !== input.port_variables.length || input.port_variables.length > 9 || (egg !== undefined && input.port_variables.some((key) => !egg.variables.some((variable) => variable.key === key)));
     const artwork = input.image || (input.steam_app_id ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${input.steam_app_id}/header.jpg` : null);
     const valid = input.name.trim() !== '' && ((input.egg_id ?? 0) > 0 || !!input.catalog_id) && RANGES.every(({ key }) => input[`${key}_min`] <= input[`${key}_max`]);
     const eggOptions = [
@@ -150,9 +154,11 @@ export default function GameDialog({ game, preset = null, eggs, pending, onClose
                     ))}
                 </div>
                 <div className='srvc:grid srvc:gap-2'>
+                    <Label htmlFor='srvc-port-mode'>Port assignment</Label>
+                    <Select id='srvc-port-mode' value={input.port_mode ?? 'consecutive'} onChange={(value) => set({ port_mode: value as 'automatic' | 'consecutive' })} options={[{ value: 'automatic', label: 'Automatic — any free ports' }, { value: 'consecutive', label: 'Advanced — consecutive ports (ordered variables)' }]} />
                     <div className='srvc:grid srvc:gap-4 srvc:sm:grid-cols-[10rem_minmax(0,1fr)]'>
                         <div>
-                            <Label htmlFor='srvc-ports'>Ports in a row</Label>
+                            <Label htmlFor='srvc-ports'>{consecutive ? 'Minimum ports in a row' : 'Minimum total ports'}</Label>
                             <Input id='srvc-ports' type='number' min={1} max={10} value={input.ports} onChange={(event) => set({ ports: Number(event.currentTarget.value) })} />
                         </div>
                         <div>
@@ -160,16 +166,24 @@ export default function GameDialog({ game, preset = null, eggs, pending, onClose
                             <Input
                                 id='srvc-port-variables'
                                 placeholder='QUERY_PORT, RCON_PORT'
-                                disabled={input.ports < 2}
+                                list='srvc-egg-port-variables'
                                 value={portNames}
                                 onChange={(event) => {
                                     setPortNames(event.currentTarget.value);
                                     set({ port_variables: event.currentTarget.value.split(/[\s,]+/).filter(Boolean) });
                                 }}
                             />
+                            <datalist id='srvc-egg-port-variables'>{egg?.variables.map((variable) => <option key={variable.key} value={variable.key}>{variable.name}</option>)}</datalist>
+                            {egg && <Select aria-label='Add automatic port variable' value={null} placeholder='Select an egg variable' options={egg.variables.filter((variable) => !input.port_variables.includes(variable.key)).map((variable) => ({ value: variable.key, label: `${variable.name} (${variable.key})` }))} onChange={(value) => {
+                                if (!value) return;
+                                const variables = [...input.port_variables, String(value)];
+                                set({ port_variables: variables });
+                                setPortNames(variables.join(', '));
+                            }} />}
                         </div>
                     </div>
-                    <p className='srvc:text-xs srvc:text-muted-foreground'>For games that need more than one port. The second, third and so on go into these egg variables, in order.</p>
+                    <p className='srvc:text-xs srvc:text-muted-foreground'>{portCount} ports required, including the primary port. {consecutive ? 'The second, third and following ports fill the variables in the listed order. Existing assignments are preserved.' : 'Each selected variable receives a free port automatically. Input order does not matter.'}</p>
+                    {invalidPorts && <p role='alert' className='srvc:text-destructive'>Choose up to nine distinct variable keys from the selected egg.</p>}
                 </div>
                 <div className='srvc:grid srvc:gap-2'>
                     <div>
@@ -187,7 +201,7 @@ export default function GameDialog({ game, preset = null, eggs, pending, onClose
                 <Button.Text className='srvc:w-full srvc:sm:w-auto' disabled={pending} onClick={onClose}>
                     Cancel
                 </Button.Text>
-                <Button className='srvc:w-full srvc:sm:w-auto' disabled={!valid} isLoading={pending} onClick={() => onSave(input)}>
+                <Button className='srvc:w-full srvc:sm:w-auto' disabled={!valid || invalidPorts} isLoading={pending} onClick={() => onSave(input)}>
                     Save
                 </Button>
             </Dialog.Footer>

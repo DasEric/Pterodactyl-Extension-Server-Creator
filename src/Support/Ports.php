@@ -13,7 +13,7 @@ final class Ports
      * @param  iterable<array{id: int, node: int, ip: string, port: int}>  $free
      * @return list<list<int>> The allocation IDs of each run, lowest port first.
      */
-    public static function runs(iterable $free, int $count): array
+    public static function runs(iterable $free, int $count, bool $consecutive = true): array
     {
         $groups = [];
 
@@ -29,7 +29,7 @@ final class Ports
             $last = null;
 
             foreach ($ports as $port => $id) {
-                $run = $last !== null && $port === $last + 1 ? [...$run, $id] : [$id];
+                $run = ! $consecutive || ($last !== null && $port === $last + 1) ? [...$run, $id] : [$id];
                 $last = $port;
 
                 if (count($run) === $count) {
@@ -65,6 +65,24 @@ final class Ports
         return $environment;
     }
 
+    /** Resolve every configured variable or fail before creating/changing a server. */
+    public static function managed(array $keys, array $ports, array $variables, bool $consecutive = true): array
+    {
+        if (! $consecutive) {
+            sort($variables, SORT_STRING);
+        }
+
+        $values = [];
+        foreach ($variables as $index => $variable) {
+            if (! in_array($variable, $keys, true) || ! isset($ports[$index + 1]) || isset($values[$variable])) {
+                throw new \ServerCreator\Exceptions\CreatorException('Invalid automatic port configuration. Ask an administrator to check the game\'s egg variables and port count.');
+            }
+            $values[$variable] = (string) $ports[$index + 1];
+        }
+
+        return $values;
+    }
+
     /**
      * The ports from the primary allocation on, when the server already holds `count` of them in a row on its IP
      * and every one lies within the ranges. No ranges allow any port.
@@ -73,18 +91,34 @@ final class Ports
      * @param  list<array{int, int}>  $ranges
      * @return list<int>|null
      */
-    public static function runFrom(iterable $allocations, int $primary, int $count, array $ranges): ?array
+    public static function runFrom(iterable $allocations, int $primary, int $count, array $ranges, bool $consecutive = true): ?array
     {
         $held = [];
         $start = null;
 
         foreach ($allocations as $allocation) {
-            $held[$allocation['ip'].'|'.$allocation['port']] = true;
+            $held[$allocation['ip'].'|'.$allocation['port']] = $allocation;
             $start = $allocation['id'] === $primary ? $allocation : $start;
         }
 
         if ($start === null) {
             return null;
+        }
+
+        if (! $consecutive) {
+            $available = [];
+            foreach ($held as $allocation) {
+                $port = $allocation['port'];
+                if ($allocation['ip'] === $start['ip'] && ($ranges === [] || array_filter($ranges, static fn (array $range): bool => $port >= $range[0] && $port <= $range[1]) !== [])) {
+                    $available[] = $port;
+                }
+            }
+            if (! in_array($start['port'], $available, true) || count($available) < $count) {
+                return null;
+            }
+            sort($available, SORT_NUMERIC);
+
+            return [$start['port'], ...array_slice(array_values(array_diff($available, [$start['port']])), 0, $count - 1)];
         }
 
         $ports = range($start['port'], $start['port'] + max(1, $count) - 1);

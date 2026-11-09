@@ -125,7 +125,7 @@ function SwitchDialog({ identifier, data, games, onClose }: { identifier: string
                         <p className='srvc:text-xs srvc:text-muted-foreground'>
                             The startup command and Docker image are reset for {game.name}.
                             {(game.port_range || game.ports > 1) &&
-                                ` The server moves to ${game.ports > 1 ? `${game.ports} free ports in a row` : 'a free port'}${game.port_range ? ` in ${game.port_range}` : ''} unless its own already fit.`}
+                                ` The server moves to ${game.ports > 1 ? `${game.ports} free ports${game.port_mode === 'automatic' ? '' : ' in a row'}` : 'a free port'}${game.port_range ? ` in ${game.port_range}` : ''} unless its own already fit.`}
                             {reinstall && ' The install script runs afterwards and can overwrite files.'}
                         </p>
                     </>

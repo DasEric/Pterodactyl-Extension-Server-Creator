@@ -34,6 +34,7 @@ export interface Game {
     allocations: number;
     /** Ports in a row each new server gets; the ones after the first go into `port_variables`. */
     ports: number;
+    port_mode?: 'automatic' | 'consecutive';
     port_variables: string[];
     /** Ports and ranges new servers get their ports from, such as `25565-25600`; null for any port. */
     port_range: string | null;
@@ -103,7 +104,7 @@ export interface SwitchInput {
 
 export interface Admin {
     games: Game[];
-    eggs: { id: number; name: string; images: string[] }[];
+    eggs: { id: number; name: string; images: string[]; variables: { key: string; name: string }[] }[];
     popular: PopularGame[];
     quota: Limits;
     users: { id: number; username: string; email: string; limits: Limits }[];
