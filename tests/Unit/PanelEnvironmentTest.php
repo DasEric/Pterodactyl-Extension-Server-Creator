@@ -14,6 +14,7 @@ use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\TestCase;
 use Pterodactyl\Models\Egg;
 use ReflectionClass;
+use ReflectionMethod;
 use ServerCreator\Panel\Panel;
 
 final class PanelEnvironmentTest extends TestCase
@@ -38,6 +39,10 @@ final class PanelEnvironmentTest extends TestCase
         $database->bootEloquent();
         $container->instance('db', $database->getDatabaseManager());
         $container->bind('db.schema', fn () => $database->schema());
+        $database->schema()->create('eggs', function ($table): void {
+            $table->increments('id');
+        });
+        $database->table('eggs')->insert(['id' => 1]);
         $database->schema()->create('egg_variables', function ($table): void {
             $table->increments('id');
             $table->integer('egg_id');
@@ -97,5 +102,25 @@ final class PanelEnvironmentTest extends TestCase
         $migration->down();
         $this->assertFalse($schema->hasColumn('ext_server_creator_games', 'port_mode'));
         $this->assertSame(1, app('db')->table('ext_server_creator_games')->count());
+    }
+
+    public function test_extra_count_is_added_to_primary_and_not_persisted_as_an_unknown_column(): void
+    {
+        $controller = (new ReflectionClass(\ServerCreator\Http\Controllers\AdminController::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod($controller, 'validatePorts');
+        $data = $method->invoke($controller, ['egg_id' => 1, 'ports' => 9, 'extra_ports' => 2, 'port_mode' => 'automatic', 'port_variables' => ['TELNET_PORT']]);
+        $this->assertSame(3, $data['ports']);
+        $this->assertArrayNotHasKey('extra_ports', $data);
+        $this->assertSame(['TELNET_PORT'], $data['port_variables']);
+        $game = new \ServerCreator\Models\Game($data);
+        $this->assertSame(3, $game->portCount());
+    }
+
+    public function test_extra_port_count_never_silently_increases_to_fit_variables(): void
+    {
+        $controller = (new ReflectionClass(\ServerCreator\Http\Controllers\AdminController::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod($controller, 'validatePorts');
+        $this->expectException(ValidationException::class);
+        $method->invoke($controller, ['egg_id' => 1, 'ports' => 1, 'extra_ports' => 0, 'port_variables' => ['TELNET_PORT']]);
     }
 }

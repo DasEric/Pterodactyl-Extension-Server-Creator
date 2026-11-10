@@ -14,7 +14,6 @@ const RANGES = [
 const FEATURES = [
     { key: 'databases', label: 'Databases' },
     { key: 'backups', label: 'Backups' },
-    { key: 'allocations', label: 'Extra ports' },
 ] as const;
 
 interface Props {
@@ -62,13 +61,12 @@ function fromPreset(preset: PopularGame, eggs: Admin['eggs']): GameInput {
 export default function GameDialog({ game, preset = null, eggs, pending, onClose, onSave }: Props) {
     const [input, setInput] = useState<GameInput>(() => game ?? (preset ? fromPreset(preset, eggs) : blank(eggs)));
     const [portNames, setPortNames] = useState(input.port_variables.join(', '));
+    const [extraPorts, setExtraPorts] = useState(Math.max(input.ports - 1, input.port_variables.length));
     const [term, setTerm] = useState('');
     const steam = useQuery({ queryKey: keys.steam(term), queryFn: () => searchSteam(term), enabled: term.trim().length >= 2 });
     const set = (changes: Partial<GameInput>) => setInput((current) => ({ ...current, ...changes }));
     const egg = eggs.find((item) => item.id === input.egg_id);
-    const consecutive = (input.port_mode ?? 'consecutive') === 'consecutive';
-    const portCount = Math.max(input.ports, input.port_variables.length + 1);
-    const invalidPorts = new Set(input.port_variables).size !== input.port_variables.length || input.port_variables.length > 9 || (egg !== undefined && input.port_variables.some((key) => !egg.variables.some((variable) => variable.key === key)));
+    const invalidPorts = !Number.isInteger(extraPorts) || extraPorts < 0 || extraPorts > 9 || new Set(input.port_variables).size !== input.port_variables.length || input.port_variables.length > extraPorts || (egg !== undefined && input.port_variables.some((key) => !egg.variables.some((variable) => variable.key === key)));
     const artwork = input.image || (input.steam_app_id ? `https://cdn.cloudflare.steamstatic.com/steam/apps/${input.steam_app_id}/header.jpg` : null);
     const valid = input.name.trim() !== '' && ((input.egg_id ?? 0) > 0 || !!input.catalog_id) && RANGES.every(({ key }) => input[`${key}_min`] <= input[`${key}_max`]);
     const eggOptions = [
@@ -152,45 +150,19 @@ export default function GameDialog({ game, preset = null, eggs, pending, onClose
                             <Input id={`srvc-${key}`} type='number' min={0} max={100} value={input[key]} onChange={(event) => set({ [key]: Number(event.currentTarget.value) })} />
                         </div>
                     ))}
-                </div>
-                <div className='srvc:grid srvc:gap-2'>
-                    <Label htmlFor='srvc-port-mode'>Port assignment</Label>
-                    <Select id='srvc-port-mode' value={input.port_mode ?? 'consecutive'} onChange={(value) => set({ port_mode: value as 'automatic' | 'consecutive' })} options={[{ value: 'automatic', label: 'Automatic — any free ports' }, { value: 'consecutive', label: 'Advanced — consecutive ports (ordered variables)' }]} />
-                    <div className='srvc:grid srvc:gap-4 srvc:sm:grid-cols-[10rem_minmax(0,1fr)]'>
-                        <div>
-                            <Label htmlFor='srvc-ports'>{consecutive ? 'Minimum ports in a row' : 'Minimum total ports'}</Label>
-                            <Input id='srvc-ports' type='number' min={1} max={10} value={input.ports} onChange={(event) => set({ ports: Number(event.currentTarget.value) })} />
-                        </div>
-                        <div>
-                            <Label htmlFor='srvc-port-variables'>Variables for the extra ports</Label>
-                            <Input
-                                id='srvc-port-variables'
-                                placeholder='QUERY_PORT, RCON_PORT'
-                                list='srvc-egg-port-variables'
-                                value={portNames}
-                                onChange={(event) => {
-                                    setPortNames(event.currentTarget.value);
-                                    set({ port_variables: event.currentTarget.value.split(/[\s,]+/).filter(Boolean) });
-                                }}
-                            />
-                            <datalist id='srvc-egg-port-variables'>{egg?.variables.map((variable) => <option key={variable.key} value={variable.key}>{variable.name}</option>)}</datalist>
-                            {egg && <Select aria-label='Add automatic port variable' value={null} placeholder='Select an egg variable' options={egg.variables.filter((variable) => !input.port_variables.includes(variable.key)).map((variable) => ({ value: variable.key, label: `${variable.name} (${variable.key})` }))} onChange={(value) => {
-                                if (!value) return;
-                                const variables = [...input.port_variables, String(value)];
-                                set({ port_variables: variables });
-                                setPortNames(variables.join(', '));
-                            }} />}
-                        </div>
-                    </div>
-                    <p className='srvc:text-xs srvc:text-muted-foreground'>{portCount} ports required, including the primary port. {consecutive ? 'The second, third and following ports fill the variables in the listed order. Existing assignments are preserved.' : 'Each selected variable receives a free port automatically. Input order does not matter.'}</p>
-                    {invalidPorts && <p role='alert' className='srvc:text-destructive'>Choose up to nine distinct variable keys from the selected egg.</p>}
-                </div>
-                <div className='srvc:grid srvc:gap-2'>
                     <div>
-                        <Label htmlFor='srvc-port-range'>Port range</Label>
-                        <Input id='srvc-port-range' placeholder='25565-25600' maxLength={191} value={input.port_range ?? ''} onChange={(event) => set({ port_range: event.currentTarget.value || null })} />
+                        <Label htmlFor='srvc-extra-ports'>Extra ports</Label>
+                        <Input id='srvc-extra-ports' type='number' min={0} max={9} value={extraPorts} onChange={(event) => setExtraPorts(Number(event.currentTarget.value))} />
                     </div>
-                    <p className='srvc:text-xs srvc:text-muted-foreground'>Servers of this game only get ports from these ports and ranges, separated by commas, also after a switch or egg change. Empty for any free port.</p>
+                </div>
+                <div className='srvc:grid srvc:gap-2'>
+                    <Label htmlFor='srvc-port-variables'>Egg variables for extra ports</Label>
+                    <Input id='srvc-port-variables' placeholder='TELNET_PORT, RCON_PORT' value={portNames} onChange={(event) => {
+                        setPortNames(event.currentTarget.value);
+                        set({ port_variables: event.currentTarget.value.split(/[\s,]+/).filter(Boolean) });
+                    }} />
+                    <p className='srvc:text-xs srvc:text-muted-foreground'>Each listed variable receives one of the extra ports assigned to the server. Separate variable keys with commas. The primary port is not included in Extra ports.</p>
+                    {invalidPorts && <p role='alert' className='srvc:text-destructive'>Enter 0–9 extra ports and no more variable keys than extra ports. Keys must be distinct and belong to the selected egg.</p>}
                 </div>
                 <label className='srvc:flex srvc:items-center srvc:justify-between srvc:gap-3 srvc:text-sm'>
                     <span>Users can pick this game</span>
@@ -201,7 +173,7 @@ export default function GameDialog({ game, preset = null, eggs, pending, onClose
                 <Button.Text className='srvc:w-full srvc:sm:w-auto' disabled={pending} onClick={onClose}>
                     Cancel
                 </Button.Text>
-                <Button className='srvc:w-full srvc:sm:w-auto' disabled={!valid || invalidPorts} isLoading={pending} onClick={() => onSave(input)}>
+                <Button className='srvc:w-full srvc:sm:w-auto' disabled={!valid || invalidPorts} isLoading={pending} onClick={() => onSave({ ...input, extra_ports: extraPorts, ports: extraPorts + 1 })}>
                     Save
                 </Button>
             </Dialog.Footer>

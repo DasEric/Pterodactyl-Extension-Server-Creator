@@ -19,8 +19,8 @@ Let users create their own servers within a quota, and duplicate servers in one 
 
 - **Game picker**: users pick a game, then size it with sliders in GiB and cores, or click the size to type it. Shows what's left and marks a recommended size.
 - **Popular games**: Counter-Strike 2, Valheim, Terraria, Palworld, Project Zomboid and more come with sizes and artwork. Missing eggs are imported from the Pterodactyl egg catalog.
-- **Automatic extra ports**: select the egg variables that need ports. Their values are filled before validation and installation; users do not enter port numbers. Automatic mode accepts non-consecutive free ports on the same node and IP, regardless of variable input order.
-- **Consecutive ports**: existing games and presets retain their ordered port blocks. Use the advanced consecutive mode when an egg needs fixed offsets from its primary port. Minimum port count can reserve ports without variables; selected variables automatically increase the required count.
+- **Extra ports**: enter the number of additional ports and the egg variable keys, such as `TELNET_PORT, RCON_PORT`. One extra port means two assigned ports including the primary. Each listed variable receives an assigned extra port before validation and installation. The requested count is exact; too many variable keys produce a validation error instead of silently adding ports.
+- **Existing port rules**: existing games and presets retain their stored consecutive-port and range settings internally. New custom games use free ports on the same node and IP without requiring consecutive port numbers. There is no mode selector or second port-count field in the form.
 - **Port ranges**: limit a game to ports such as `25565-25600`, so each game gets its own ports on a shared node.
 - **Quotas**: limit servers, memory, disk, CPU, databases, backups and ports, for everyone or per user.
 - **Resources page**: owners resize, switch to another game and delete (opt-in) on their server's Resources page. A switch brings the new game's egg, limits and ports, and egg changes from other extensions keep the game and ports in step.
@@ -35,9 +35,9 @@ Users only see the **Create server** button once their quota allows at least one
 
 ### Updating port configuration
 
-The extension migration adds `port_mode` without changing existing servers or variable order. Existing games and presets remain in consecutive mode; newly added custom games default to automatic mode. Port variables must be ENV keys belonging to the selected egg, not display names. The admin selector shows both. The allocation limit remains separate from the ports required by the game; this update does not increase user quotas.
+The extension migration adds `port_mode` without changing existing servers or variable order. Existing games and presets remain in consecutive mode; newly added custom games default to automatic mode. Port variables must be ENV keys belonging to the selected egg, not display names. Enter them separated by commas. No variable is selected merely because its name contains PORT. The stored allocation limit remains separate from required game ports; the simplified form preserves that limit and does not change user quotas.
 
-Back up the game configuration before changing modes. Switching an existing game to automatic mode opts into name-sorted variable assignment for subsequent creation/game-switch operations. Do not downgrade an automatic configuration to an older release without first reviewing its consecutive-port requirements. Updating the extension alone does not reassign running servers.
+The simplified form preserves previously stored port modes and ranges. Automatic assignments use name-sorted variable keys; legacy consecutive assignments preserve their original list order. Do not downgrade an automatic configuration to an older release without first reviewing its consecutive-port requirements. Updating the extension alone does not reassign running servers.
 
 ---
 

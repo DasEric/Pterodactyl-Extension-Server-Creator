@@ -42,6 +42,8 @@ export interface Game {
 }
 
 export type GameInput = Omit<Game, 'id' | 'egg' | 'egg_id' | 'artwork' | 'variables'> & {
+    /** Exact number assigned in addition to the primary port; not an allocation limit. */
+    extra_ports?: number;
     /** Null when the egg is imported from the catalog on save. */
     egg_id: number | null;
     catalog_id?: string | null;

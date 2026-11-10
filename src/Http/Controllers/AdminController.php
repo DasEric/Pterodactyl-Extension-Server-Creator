@@ -206,6 +206,7 @@ final class AdminController
             'backups' => ['required', 'integer', 'min:0', 'max:100'],
             'allocations' => ['required', 'integer', 'min:0', 'max:100'],
             'ports' => ['integer', 'min:1', 'max:10'],
+            'extra_ports' => ['sometimes', 'integer', 'min:0', 'max:9'],
             'port_mode' => ['sometimes', Rule::in(['automatic', 'consecutive'])],
             'port_variables' => ['nullable', 'array', 'max:9'],
             'port_variables.*' => ['string', 'distinct', 'regex:/^[A-Za-z0-9_]{1,191}$/'],
@@ -238,6 +239,13 @@ final class AdminController
     {
         $data['port_mode'] ??= 'consecutive';
         $variables = $data['port_variables'] ?? [];
+        if (array_key_exists('extra_ports', $data)) {
+            $extra = (int) Arr::pull($data, 'extra_ports');
+            if (count($variables) > $extra) {
+                throw ValidationException::withMessages(['port_variables' => 'Enter no more variable keys than extra ports.']);
+            }
+            $data['ports'] = $extra + 1;
+        }
         $keys = Egg::query()->findOrFail($data['egg_id'])->variables()->pluck('env_variable')->all();
         if (array_diff($variables, $keys) !== []) {
             throw ValidationException::withMessages(['port_variables' => 'Select port variables that belong to the selected egg.']);
